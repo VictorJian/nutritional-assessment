@@ -47,7 +47,97 @@
   }
   .toolbar button:hover { background: var(--green-light); }
   .toolbar button.active { background: var(--green-dark); color: #fff; border-color: var(--green-dark); }
+  .toolbar button:disabled { opacity: .6; cursor: wait; }
   .hint { font-size: .8rem; color: #78909c; align-self: center; }
+  .submit-status {
+    font-size: .82rem;
+    color: #546e7a;
+    align-self: center;
+    min-height: 1.2em;
+  }
+  .submit-status.success { color: var(--green-dark); }
+  .submit-status.error { color: var(--warn); }
+  .api-panel {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #dce5dc;
+  }
+  .api-panel h3 {
+    font-size: 1rem;
+    color: var(--green-dark);
+    margin-bottom: 10px;
+  }
+  .api-actions {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .api-actions label {
+    color: #455a64;
+    flex: 1 1 260px;
+    font-size: .9rem;
+  }
+  .api-actions input {
+    width: 100%;
+    border: 1px solid #cfd8dc;
+    border-radius: 6px;
+    font-size: .9rem;
+    margin-top: 4px;
+    outline: none;
+    padding: 8px 10px;
+  }
+  .api-actions input:focus {
+    border-color: var(--green-dark);
+    box-shadow: 0 0 0 3px rgba(46, 125, 50, .12);
+  }
+  .api-actions button {
+    border: 1px solid var(--green-mid);
+    background: #fff;
+    color: var(--green-dark);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: .9rem;
+    min-height: 36px;
+    padding: 8px 14px;
+  }
+  .api-actions button:hover { background: var(--green-light); }
+  .api-actions button:disabled { opacity: .6; cursor: wait; }
+  .record-output {
+    margin-top: 12px;
+    display: grid;
+    gap: 8px;
+  }
+  .record-meta {
+    color: #455a64;
+    display: grid;
+    gap: 4px;
+    font-size: .88rem;
+  }
+  .record-meta b { color: #263238; }
+  .record-list {
+    display: grid;
+    gap: 8px;
+  }
+  .record-list button {
+    background: #fff;
+    border: 1px solid #cfd8dc;
+    border-radius: 6px;
+    color: #263238;
+    cursor: pointer;
+    display: grid;
+    gap: 3px;
+    padding: 9px 10px;
+    text-align: left;
+  }
+  .record-list button:hover {
+    border-color: var(--green-dark);
+    background: var(--green-light);
+  }
+  .record-list small {
+    color: #607d8b;
+    font-size: .78rem;
+  }
 
   .table-wrap { overflow-x: auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
   table { border-collapse: collapse; width: 100%; min-width: 980px; }
@@ -116,8 +206,10 @@
     <button id="btn-edit" type="button">✏️ 編輯對應表</button>
     <button id="btn-reset-answers" type="button">🧹 清除勾選</button>
     <button id="btn-reset-mapping" type="button">↩︎ 還原預設對應</button>
+    <button id="btn-submit" type="button">📤 送出資料</button>
     <button type="button" onclick="window.print()">🖨 列印</button>
     <span class="hint" id="edit-hint">勾選左側「是」即自動計分；點「編輯對應表」可修改灰色格子的營養素對應（會自動儲存）。</span>
+    <span class="submit-status" id="submit-status" aria-live="polite"></span>
   </div>
 
   <div class="table-wrap">
@@ -141,6 +233,22 @@
     <h2>建議補充</h2>
     <p class="note">若單項營養數值超過七以上，建議加重補充。均衡的營養、適量的補充、運動是維持健康的不二法門。</p>
     <div class="badges" id="badges"><span class="empty">尚未勾選任何項目</span></div>
+    <div class="api-panel">
+      <h3>後端紀錄</h3>
+      <div class="api-actions">
+        <label>紀錄 ID
+          <input type="text" id="record-id" autocomplete="off" placeholder="送出後自動帶入">
+        </label>
+        <button id="btn-fetch" type="button">🔎 查詢</button>
+        <label>姓名
+          <input type="text" id="search-name" autocomplete="off" placeholder="輸入姓名查詢">
+        </label>
+        <button id="btn-search-name" type="button">查姓名</button>
+      </div>
+      <div class="record-output" id="record-output" aria-live="polite">
+        <span class="empty">尚無後端紀錄</span>
+      </div>
+    </div>
   </div>
 
   <footer>2021 年製 · 本頁面僅供自我檢視參考，不能取代專業醫療診斷。</footer>
@@ -205,6 +313,8 @@ const QUESTIONS = [
 ];
 
 const STORAGE_KEY = "nutrition-assessment-mapping-v1";
+const API_BASE_URL = (window.NUTRITION_API_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
+const API_ENDPOINT = window.NUTRITION_API_ENDPOINT || `${API_BASE_URL}/api/assessments`;
 const DEFAULT_MAPPING = QUESTIONS.map(q => q.map.slice());
 
 let mapping = loadMapping();
@@ -220,6 +330,190 @@ function loadMapping() {
 }
 function saveMapping() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping));
+}
+
+function calculateTotals() {
+  return SUPPLEMENTS.map((_, si) =>
+    QUESTIONS.reduce((sum, _, qi) => sum + (answers[qi] && mapping[qi].includes(si) ? 1 : 0), 0)
+  );
+}
+
+function buildPayload() {
+  const totals = calculateTotals();
+  const ageValue = document.getElementById("age").value.trim();
+  const parsedAge = Number(ageValue);
+
+  return {
+    respondent: {
+      name: document.getElementById("name").value.trim(),
+      age: ageValue === "" ? null : (Number.isFinite(parsedAge) ? parsedAge : ageValue),
+      date: document.getElementById("date").value
+    },
+    answers: QUESTIONS.map((q, qi) => ({
+      questionId: qi + 1,
+      questionText: q.text,
+      checked: answers[qi],
+      mappedSupplements: mapping[qi].map(si => SUPPLEMENTS[si])
+    })),
+    totals: SUPPLEMENTS.map((name, si) => ({
+      supplement: name,
+      score: totals[si],
+      needsExtraSupplement: totals[si] > 7
+    })),
+    recommendations: SUPPLEMENTS
+      .map((name, si) => ({ supplement: name, score: totals[si] }))
+      .filter(item => item.score > 7),
+    submittedAt: new Date().toISOString()
+  };
+}
+
+function setSubmitStatus(message, type = "") {
+  const status = document.getElementById("submit-status");
+  status.textContent = message;
+  status.className = "submit-status" + (type ? ` ${type}` : "");
+}
+
+function getRecordEndpoint(id) {
+  return `${API_ENDPOINT.replace(/\/$/, "")}/${encodeURIComponent(id)}`;
+}
+
+function getNameSearchEndpoint(name) {
+  return `${API_ENDPOINT.replace(/\/$/, "")}?name=${encodeURIComponent(name)}`;
+}
+
+function clearElement(element) {
+  while (element.firstChild) element.removeChild(element.firstChild);
+}
+
+function formatValue(value, fallback = "未填") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value);
+}
+
+function formatDateTime(value) {
+  if (!value) return "未提供";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("zh-TW", { hour12: false });
+}
+
+function addMetaRow(parent, label, value) {
+  const row = document.createElement("div");
+  const labelEl = document.createElement("b");
+  labelEl.textContent = `${label}：`;
+  row.appendChild(labelEl);
+  row.append(document.createTextNode(formatValue(value)));
+  parent.appendChild(row);
+}
+
+function renderRecordBadges(parent, data) {
+  const badges = document.createElement("div");
+  badges.className = "badges";
+
+  const recommendations = Array.isArray(data.recommendations) ? data.recommendations : [];
+  const totals = Array.isArray(data.totals) ? data.totals : [];
+  const items = recommendations.length > 0
+    ? recommendations
+    : totals
+        .filter(item => Number(item.score) > 0)
+        .sort((a, b) => Number(b.score) - Number(a.score));
+
+  if (items.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "empty";
+    empty.textContent = "後端回傳資料未列出建議補充";
+    badges.appendChild(empty);
+    parent.appendChild(badges);
+    return;
+  }
+
+  items.forEach(item => {
+    const score = Number(item.score) || 0;
+    const span = document.createElement("span");
+    span.className = "badge" + (score > 7 ? " over" : "");
+    span.textContent = `${formatValue(item.supplement, "未命名")}：${score} 分` + (score > 7 ? "（建議加重補充）" : "");
+    badges.appendChild(span);
+  });
+
+  parent.appendChild(badges);
+}
+
+function displayBackendRecord(record) {
+  const output = document.getElementById("record-output");
+  clearElement(output);
+
+  if (!record || !record.id) {
+    const empty = document.createElement("span");
+    empty.className = "empty";
+    empty.textContent = "尚無後端紀錄";
+    output.appendChild(empty);
+    return;
+  }
+
+  const data = record.data || {};
+  const respondent = data.respondent || {};
+  const meta = document.createElement("div");
+  meta.className = "record-meta";
+
+  addMetaRow(meta, "紀錄 ID", record.id);
+  addMetaRow(meta, "後端建立時間", formatDateTime(record.createdAt));
+  addMetaRow(meta, "前端送出時間", formatDateTime(data.submittedAt));
+  addMetaRow(meta, "姓名", respondent.name);
+  addMetaRow(meta, "年齡", respondent.age);
+  addMetaRow(meta, "填表日期", respondent.date);
+
+  output.appendChild(meta);
+  renderRecordBadges(output, data);
+}
+
+function displaySearchResults(result) {
+  const output = document.getElementById("record-output");
+  clearElement(output);
+
+  const records = Array.isArray(result.records) ? result.records : [];
+  if (records.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "empty";
+    empty.textContent = "查無符合姓名的後端紀錄";
+    output.appendChild(empty);
+    return;
+  }
+
+  if (records.length === 1) {
+    document.getElementById("record-id").value = records[0].id || "";
+    displayBackendRecord(records[0]);
+    return;
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "record-meta";
+  addMetaRow(meta, "查詢姓名", result.query);
+  addMetaRow(meta, "符合筆數", records.length);
+  output.appendChild(meta);
+
+  const list = document.createElement("div");
+  list.className = "record-list";
+  records.forEach(record => {
+    const data = record.data || {};
+    const respondent = data.respondent || {};
+    const button = document.createElement("button");
+    button.type = "button";
+
+    const title = document.createElement("span");
+    title.textContent = `${formatValue(respondent.name, "未填姓名")} · ${formatValue(respondent.date, "未填日期")}`;
+    const detail = document.createElement("small");
+    detail.textContent = `ID：${record.id} · 建立時間：${formatDateTime(record.createdAt)}`;
+
+    button.appendChild(title);
+    button.appendChild(detail);
+    button.addEventListener("click", () => {
+      document.getElementById("record-id").value = record.id || "";
+      displayBackendRecord(record);
+      setSubmitStatus("已載入後端紀錄。", "success");
+    });
+    list.appendChild(button);
+  });
+  output.appendChild(list);
 }
 
 function build() {
@@ -289,9 +583,7 @@ function render() {
     td.classList.toggle("hit", mapped && answers[qi]);
   });
 
-  const totals = SUPPLEMENTS.map((_, si) =>
-    QUESTIONS.reduce((sum, _, qi) => sum + (answers[qi] && mapping[qi].includes(si) ? 1 : 0), 0)
-  );
+  const totals = calculateTotals();
 
   totals.forEach((t, si) => {
     const td = document.getElementById("total-" + si);
@@ -339,6 +631,97 @@ document.getElementById("btn-reset-mapping").addEventListener("click", () => {
   mapping = DEFAULT_MAPPING.map(m => m.slice());
   saveMapping();
   render();
+});
+
+document.getElementById("btn-submit").addEventListener("click", async e => {
+  const button = e.currentTarget;
+  const payload = buildPayload();
+
+  button.disabled = true;
+  setSubmitStatus("送出中...");
+
+  try {
+    const response = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const savedRecord = await response.json();
+    document.getElementById("record-id").value = savedRecord.id || "";
+    document.getElementById("search-name").value = payload.respondent.name || "";
+    displayBackendRecord(savedRecord);
+    setSubmitStatus(`已送出資料。紀錄 ID：${savedRecord.id}`, "success");
+  } catch (error) {
+    console.error("送出營養評估資料失敗", error, payload);
+    setSubmitStatus("送出失敗，請確認後端 API 或網路狀態。", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById("btn-fetch").addEventListener("click", async e => {
+  const button = e.currentTarget;
+  const id = document.getElementById("record-id").value.trim();
+
+  if (!id) {
+    setSubmitStatus("請先輸入紀錄 ID。", "error");
+    return;
+  }
+
+  button.disabled = true;
+  setSubmitStatus("查詢中...");
+
+  try {
+    const response = await fetch(getRecordEndpoint(id));
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const savedRecord = await response.json();
+    displayBackendRecord(savedRecord);
+    setSubmitStatus("已取得後端紀錄。", "success");
+  } catch (error) {
+    console.error("查詢營養評估資料失敗", error);
+    setSubmitStatus("查詢失敗，請確認紀錄 ID 或後端 API。", "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById("btn-search-name").addEventListener("click", async e => {
+  const button = e.currentTarget;
+  const name = document.getElementById("search-name").value.trim();
+
+  if (!name) {
+    setSubmitStatus("請先輸入姓名。", "error");
+    return;
+  }
+
+  button.disabled = true;
+  setSubmitStatus("姓名查詢中...");
+
+  try {
+    const response = await fetch(getNameSearchEndpoint(name));
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    displaySearchResults(result);
+    setSubmitStatus(`姓名查詢完成，共 ${result.count || 0} 筆。`, "success");
+  } catch (error) {
+    console.error("用姓名查詢營養評估資料失敗", error);
+    setSubmitStatus("姓名查詢失敗，請確認姓名或後端 API。", "error");
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.getElementById("date").valueAsDate = new Date();
