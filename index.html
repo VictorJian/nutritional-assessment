@@ -34,11 +34,21 @@
   }
   .meta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
   .meta label { font-size: .9rem; color: #455a64; }
+  .meta label.required::after {
+    content: " *";
+    color: var(--warn);
+    font-weight: 700;
+  }
   .meta input {
     border: none; border-bottom: 1.5px solid var(--green-mid);
     background: transparent; padding: 4px 6px; font-size: .95rem; outline: none;
   }
   .meta input:focus { border-bottom-color: var(--green-dark); }
+  .meta input.invalid { border-bottom-color: var(--warn); }
+  .meta input:disabled {
+    color: #607d8b;
+    cursor: not-allowed;
+  }
 
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
   .toolbar button {
@@ -47,7 +57,13 @@
   }
   .toolbar button:hover { background: var(--green-light); }
   .toolbar button.active { background: var(--green-dark); color: #fff; border-color: var(--green-dark); }
-  .toolbar button:disabled { opacity: .6; cursor: wait; }
+  .toolbar button:disabled {
+    background: #eceff1;
+    border-color: #cfd8dc;
+    color: #90a4ae;
+    cursor: not-allowed;
+    opacity: 1;
+  }
   .hint { font-size: .8rem; color: #78909c; align-self: center; }
   .submit-status {
     font-size: .82rem;
@@ -102,7 +118,13 @@
     padding: 8px 14px;
   }
   .api-actions button:hover { background: var(--green-light); }
-  .api-actions button:disabled { opacity: .6; cursor: wait; }
+  .api-actions button:disabled {
+    background: #eceff1;
+    border-color: #cfd8dc;
+    color: #90a4ae;
+    cursor: not-allowed;
+    opacity: 1;
+  }
   .record-output {
     margin-top: 12px;
     display: grid;
@@ -167,6 +189,43 @@
   tfoot td { font-weight: 700; padding: 8px 4px; background: var(--green-band); text-align: center; }
   tfoot td.total-label { text-align: right; padding-right: 12px; color: var(--green-dark); }
   tfoot td.col-total.over { background: var(--warn); color: #fff; }
+  tfoot tr.submit-row td {
+    background: #fff;
+    font-weight: 400;
+    padding: 10px 12px;
+    text-align: right;
+  }
+  .submit-area {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .table-submit {
+    border: 1px solid var(--green-mid);
+    background: var(--green-dark);
+    color: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: .9rem;
+    min-height: 36px;
+    padding: 8px 16px;
+  }
+  .table-submit:hover { background: #1b5e20; }
+  .table-submit:disabled { opacity: .65; cursor: wait; }
+  .new-assessment {
+    border: 1px solid var(--green-dark);
+    background: #fff;
+    color: var(--green-dark);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: .9rem;
+    min-height: 36px;
+    padding: 8px 16px;
+  }
+  .new-assessment:hover { background: var(--green-light); }
+  .hidden { display: none !important; }
 
   .result {
     margin-top: 16px; background: #fff; border-radius: 8px;
@@ -185,7 +244,7 @@
   footer { margin-top: 14px; font-size: .8rem; color: #78909c; text-align: center; }
 
   @media print {
-    .toolbar, .hint { display: none; }
+    .toolbar, .hint, .submit-row { display: none; }
     body { background: #fff; padding: 0; }
     .table-wrap, .result { box-shadow: none; }
   }
@@ -196,20 +255,18 @@
   <header>
     <h1>營養評估表</h1>
     <div class="meta">
-      <label>姓名：<input type="text" id="name" size="8"></label>
-      <label>年齡：<input type="text" id="age" size="4"></label>
+      <label class="required">姓名：<input type="text" id="name" size="8" required></label>
+      <label class="required">年齡：<input type="text" id="age" size="4" required></label>
       <label>填表日期：<input type="date" id="date"></label>
     </div>
   </header>
 
   <div class="toolbar">
-    <button id="btn-edit" type="button">✏️ 編輯對應表</button>
+    <button id="btn-edit" type="button" disabled aria-disabled="true" title="此功能暫不開放">✏️ 編輯對應表</button>
     <button id="btn-reset-answers" type="button">🧹 清除勾選</button>
-    <button id="btn-reset-mapping" type="button">↩︎ 還原預設對應</button>
-    <button id="btn-submit" type="button">📤 送出資料</button>
+    <button id="btn-reset-mapping" type="button" disabled aria-disabled="true" title="此功能暫不開放">↩︎ 還原預設對應</button>
     <button type="button" onclick="window.print()">🖨 列印</button>
-    <span class="hint" id="edit-hint">勾選左側「是」即自動計分；點「編輯對應表」可修改灰色格子的營養素對應（會自動儲存）。</span>
-    <span class="submit-status" id="submit-status" aria-live="polite"></span>
+    <span class="hint" id="edit-hint">勾選左側「是」即自動計分；編輯對應表與還原預設對應功能暫不開放。</span>
   </div>
 
   <div class="table-wrap">
@@ -224,6 +281,15 @@
       <tfoot>
         <tr>
           <td class="total-label" colspan="2">總計（單項超過 7 建議加重補充）</td>
+        </tr>
+        <tr class="submit-row">
+          <td id="submit-cell" colspan="14">
+            <div class="submit-area">
+              <span class="submit-status" id="submit-status" aria-live="polite"></span>
+              <button class="table-submit" id="btn-submit" type="button">📤 送出資料</button>
+              <button class="new-assessment hidden" id="btn-new-assessment" type="button">再寫一張</button>
+            </div>
+          </td>
         </tr>
       </tfoot>
     </table>
@@ -260,8 +326,7 @@ const SUPPLEMENTS = [
   "卵磷脂", "纖維", "鈣鎂D", "益生菌", "大蒜片", "魚油", "綜合營養片"
 ];
 
-// 每題文字 + 預設對應的營養素欄位（索引對應 SUPPLEMENTS）
-// ※ 對應關係為依原表判讀之預設值，可用「編輯對應表」直接點格子校正
+// 每題文字 + 預設灰階不計分欄位（索引對應 SUPPLEMENTS）
 const QUESTIONS = [
   { text: "01. 您每天吃蔬菜、水果少於兩次", map: [0, 4, 5, 9, 10] },
   { text: "02. 您經常三餐不足 或 不定時用餐", map: [] },
@@ -320,6 +385,7 @@ const DEFAULT_MAPPING = QUESTIONS.map(q => q.map.slice());
 let mapping = loadMapping();
 let answers = QUESTIONS.map(() => false);
 let editMode = false;
+let assessmentLocked = false;
 
 function loadMapping() {
   try {
@@ -332,9 +398,13 @@ function saveMapping() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping));
 }
 
+function isScoredCell(qi, si) {
+  return !mapping[qi].includes(si);
+}
+
 function calculateTotals() {
   return SUPPLEMENTS.map((_, si) =>
-    QUESTIONS.reduce((sum, _, qi) => sum + (answers[qi] && mapping[qi].includes(si) ? 1 : 0), 0)
+    QUESTIONS.reduce((sum, _, qi) => sum + (answers[qi] && isScoredCell(qi, si) ? 1 : 0), 0)
   );
 }
 
@@ -353,7 +423,7 @@ function buildPayload() {
       questionId: qi + 1,
       questionText: q.text,
       checked: answers[qi],
-      mappedSupplements: mapping[qi].map(si => SUPPLEMENTS[si])
+      mappedSupplements: SUPPLEMENTS.filter((_, si) => isScoredCell(qi, si))
     })),
     totals: SUPPLEMENTS.map((name, si) => ({
       supplement: name,
@@ -371,6 +441,47 @@ function setSubmitStatus(message, type = "") {
   const status = document.getElementById("submit-status");
   status.textContent = message;
   status.className = "submit-status" + (type ? ` ${type}` : "");
+}
+
+function setAssessmentLocked(locked) {
+  assessmentLocked = locked;
+  ["name", "age", "date", "record-id", "search-name"].forEach(id => {
+    document.getElementById(id).disabled = locked;
+  });
+  document.querySelectorAll("tbody input[type=checkbox]").forEach(cb => {
+    cb.disabled = locked;
+  });
+  document.getElementById("btn-reset-answers").disabled = locked;
+  document.getElementById("btn-fetch").disabled = locked;
+  document.getElementById("btn-search-name").disabled = locked;
+  document.getElementById("btn-submit").classList.toggle("hidden", locked);
+  document.getElementById("btn-new-assessment").classList.toggle("hidden", !locked);
+}
+
+function validateRequiredFields() {
+  const requiredFields = [
+    { id: "name", label: "姓名" },
+    { id: "age", label: "年齡" }
+  ];
+
+  const missing = requiredFields.filter(field => {
+    const input = document.getElementById(field.id);
+    return input.value.trim() === "";
+  });
+
+  requiredFields.forEach(field => {
+    const input = document.getElementById(field.id);
+    input.classList.toggle("invalid", input.value.trim() === "");
+  });
+
+  if (missing.length > 0) {
+    const firstInput = document.getElementById(missing[0].id);
+    firstInput.focus();
+    setSubmitStatus(`請填寫${missing.map(field => field.label).join("、")}。`, "error");
+    return false;
+  }
+
+  return true;
 }
 
 function getRecordEndpoint(id) {
@@ -466,6 +577,35 @@ function displayBackendRecord(record) {
   renderRecordBadges(output, data);
 }
 
+function resetBackendRecordDisplay() {
+  const output = document.getElementById("record-output");
+  clearElement(output);
+  const empty = document.createElement("span");
+  empty.className = "empty";
+  empty.textContent = "尚無後端紀錄";
+  output.appendChild(empty);
+}
+
+function startNewAssessment() {
+  setAssessmentLocked(false);
+  answers = QUESTIONS.map(() => false);
+
+  document.getElementById("name").value = "";
+  document.getElementById("age").value = "";
+  document.getElementById("date").valueAsDate = new Date();
+  document.getElementById("record-id").value = "";
+  document.getElementById("search-name").value = "";
+
+  document.querySelectorAll(".meta input.invalid").forEach(input => input.classList.remove("invalid"));
+  document.querySelectorAll("tbody input[type=checkbox]").forEach(cb => cb.checked = false);
+  document.querySelectorAll("tbody tr").forEach(tr => tr.classList.remove("checked-row"));
+
+  resetBackendRecordDisplay();
+  setSubmitStatus("已開始填寫新評估。", "success");
+  render();
+  document.getElementById("name").focus();
+}
+
 function displaySearchResults(result) {
   const output = document.getElementById("record-output");
   clearElement(output);
@@ -552,7 +692,7 @@ function build() {
       td.dataset.q = qi;
       td.dataset.s = si;
       td.addEventListener("click", () => {
-        if (!editMode) return;
+        if (!editMode || assessmentLocked) return;
         const set = new Set(mapping[qi]);
         set.has(si) ? set.delete(si) : set.add(si);
         mapping[qi] = [...set].sort((a, b) => a - b);
@@ -573,14 +713,16 @@ function build() {
     td.textContent = "0";
     tfootRow.appendChild(td);
   });
+  document.getElementById("submit-cell").colSpan = SUPPLEMENTS.length + 2;
 }
 
 function render() {
   document.querySelectorAll("td.grid-cell").forEach(td => {
     const qi = +td.dataset.q, si = +td.dataset.s;
-    const mapped = mapping[qi].includes(si);
-    td.classList.toggle("mapped", mapped);
-    td.classList.toggle("hit", mapped && answers[qi]);
+    const isGrayCell = mapping[qi].includes(si);
+    const isHitCell = !isGrayCell && answers[qi];
+    td.classList.toggle("mapped", isGrayCell);
+    td.classList.toggle("hit", isHitCell);
   });
 
   const totals = calculateTotals();
@@ -610,16 +752,8 @@ function render() {
   });
 }
 
-document.getElementById("btn-edit").addEventListener("click", e => {
-  editMode = !editMode;
-  e.currentTarget.classList.toggle("active", editMode);
-  document.body.classList.toggle("edit-mode", editMode);
-  document.getElementById("edit-hint").textContent = editMode
-    ? "編輯模式：點任一格子可切換該題與營養素的對應，變更會自動儲存。再按一次結束編輯。"
-    : "勾選左側「是」即自動計分；點「編輯對應表」可修改灰色格子的營養素對應（會自動儲存）。";
-});
-
 document.getElementById("btn-reset-answers").addEventListener("click", () => {
+  if (assessmentLocked) return;
   answers = QUESTIONS.map(() => false);
   document.querySelectorAll("tbody input[type=checkbox]").forEach(cb => cb.checked = false);
   document.querySelectorAll("tbody tr").forEach(tr => tr.classList.remove("checked-row"));
@@ -633,8 +767,17 @@ document.getElementById("btn-reset-mapping").addEventListener("click", () => {
   render();
 });
 
+["name", "age"].forEach(id => {
+  document.getElementById(id).addEventListener("input", e => {
+    e.currentTarget.classList.toggle("invalid", e.currentTarget.value.trim() === "");
+  });
+});
+
 document.getElementById("btn-submit").addEventListener("click", async e => {
   const button = e.currentTarget;
+  if (assessmentLocked) return;
+  if (!validateRequiredFields()) return;
+
   const payload = buildPayload();
 
   button.disabled = true;
@@ -655,6 +798,7 @@ document.getElementById("btn-submit").addEventListener("click", async e => {
     document.getElementById("record-id").value = savedRecord.id || "";
     document.getElementById("search-name").value = payload.respondent.name || "";
     displayBackendRecord(savedRecord);
+    setAssessmentLocked(true);
     setSubmitStatus(`已送出資料。紀錄 ID：${savedRecord.id}`, "success");
   } catch (error) {
     console.error("送出營養評估資料失敗", error, payload);
@@ -663,6 +807,8 @@ document.getElementById("btn-submit").addEventListener("click", async e => {
     button.disabled = false;
   }
 });
+
+document.getElementById("btn-new-assessment").addEventListener("click", startNewAssessment);
 
 document.getElementById("btn-fetch").addEventListener("click", async e => {
   const button = e.currentTarget;
