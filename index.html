@@ -182,9 +182,6 @@
   td.grid-cell { height: 26px; text-align: center; }
   td.grid-cell.mapped { background: #cfd8dc; }
   td.grid-cell.mapped.hit { background: var(--hit-cell); }
-  body.edit-mode td.grid-cell { cursor: pointer; }
-  body.edit-mode td.grid-cell:hover { outline: 2px solid var(--green-dark); outline-offset: -2px; }
-  body.edit-mode td.grid-cell.mapped { background: var(--gray-cell); }
 
   tfoot td { font-weight: 700; padding: 8px 4px; background: var(--green-band); text-align: center; }
   tfoot td.total-label { text-align: right; padding-right: 12px; color: var(--green-dark); }
@@ -262,12 +259,10 @@
   </header>
 
   <div class="toolbar">
-    <button id="btn-edit" type="button" disabled aria-disabled="true" title="此功能暫不開放">✏️ 編輯對應表</button>
     <button id="btn-reset-answers" type="button">🧹 清除勾選</button>
-    <button id="btn-reset-mapping" type="button" disabled aria-disabled="true" title="此功能暫不開放">↩︎ 還原預設對應</button>
     <button type="button" onclick="window.print()">🖨 列印</button>
     <button id="btn-save-pdf" type="button">📄 存成 PDF</button>
-    <span class="hint" id="edit-hint">勾選左側「是」即自動計分；編輯對應表與還原預設對應功能暫不開放。</span>
+    <span class="hint" id="edit-hint">勾選左側「是」即自動計分。</span>
   </div>
 
   <div class="table-wrap">
@@ -379,26 +374,13 @@ const QUESTIONS = [
   { text: "47. 您現在已經懷孕或在哺乳", map: [] }
 ];
 
-const STORAGE_KEY = "nutrition-assessment-mapping-v1";
 const API_BASE_URL = (window.NUTRITION_API_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const API_ENDPOINT = window.NUTRITION_API_ENDPOINT || `${API_BASE_URL}/api/assessments`;
 const DEFAULT_MAPPING = QUESTIONS.map(q => q.map.slice());
 
-let mapping = loadMapping();
+let mapping = DEFAULT_MAPPING.map(m => m.slice());
 let answers = QUESTIONS.map(() => false);
-let editMode = false;
 let assessmentLocked = false;
-
-function loadMapping() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (Array.isArray(saved) && saved.length === QUESTIONS.length) return saved;
-  } catch (e) { /* 略過壞資料 */ }
-  return DEFAULT_MAPPING.map(m => m.slice());
-}
-function saveMapping() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(mapping));
-}
 
 function isScoredCell(qi, si) {
   return !mapping[qi].includes(si);
@@ -457,19 +439,398 @@ function getPdfTitle() {
   return ["營養評估表", name, date, recordId].filter(Boolean).join("_");
 }
 
-function saveAsPdf() {
-  const previousTitle = document.title;
-  document.title = getPdfTitle();
-  setSubmitStatus("請在列印視窗選擇「另存為 PDF」。", "success");
+function getRecordMetaText(label) {
+  const rows = document.querySelectorAll("#record-output .record-meta div");
+  for (const row of rows) {
+    const text = row.textContent.trim();
+    const prefix = `${label}：`;
+    if (text.startsWith(prefix)) return text.slice(prefix.length).trim();
+  }
+  return "";
+}
 
-  const restoreTimer = window.setTimeout(restoreTitle, 30000);
-  function restoreTitle() {
-    document.title = previousTitle;
-    window.clearTimeout(restoreTimer);
+function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+  const chars = Array.from(String(text || ""));
+  const lines = [];
+  let line = "";
+
+  chars.forEach(char => {
+    const next = line + char;
+    if (line && ctx.measureText(next).width > maxWidth) {
+      lines.push(line);
+      line = char;
+    } else {
+      line = next;
+    }
+  });
+  if (line) lines.push(line);
+
+  const visibleLines = lines.slice(0, maxLines);
+  if (lines.length > maxLines) {
+    let lastLine = visibleLines[visibleLines.length - 1] || "";
+    while (lastLine && ctx.measureText(`${lastLine}...`).width > maxWidth) {
+      lastLine = lastLine.slice(0, -1);
+    }
+    visibleLines[visibleLines.length - 1] = `${lastLine}...`;
   }
 
-  window.addEventListener("afterprint", restoreTitle, { once: true });
-  window.print();
+  visibleLines.forEach((lineText, index) => {
+    ctx.fillText(lineText, x, y + index * lineHeight);
+  });
+}
+
+function drawCenteredText(ctx, text, x, y, width, height) {
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x + width / 2, y + height / 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
+function drawCell(ctx, x, y, width, height, fillStyle, strokeStyle = "#bdbdbd") {
+  ctx.fillStyle = fillStyle;
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, width, height);
+}
+
+function drawCheckBox(ctx, x, y, checked) {
+  const size = 28;
+  const boxX = x + 26;
+  const boxY = y + 13;
+
+  ctx.strokeStyle = checked ? "#2e7d32" : "#9e9e9e";
+  ctx.lineWidth = 4;
+  ctx.strokeRect(boxX, boxY, size, size);
+
+  if (!checked) return;
+
+  ctx.fillStyle = "#2e7d32";
+  ctx.fillRect(boxX, boxY, size, size);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(boxX + 7, boxY + 15);
+  ctx.lineTo(boxX + 13, boxY + 22);
+  ctx.lineTo(boxX + 22, boxY + 7);
+  ctx.stroke();
+}
+
+function drawPdfHeader(ctx, width, padding, tableWidth) {
+  const name = document.getElementById("name").value.trim() || "未填";
+  const age = document.getElementById("age").value.trim() || "未填";
+  const date = document.getElementById("date").value || "未填";
+  const recordId = document.getElementById("record-id").value.trim();
+  const createdAt = getRecordMetaText("建立時間");
+  const metaRows = [
+    ["姓名", name],
+    ["年齡", age],
+    ["填表日期", date]
+  ];
+  if (recordId) metaRows.push(["紀錄 ID", recordId]);
+  if (createdAt) metaRows.push(["建立時間", createdAt]);
+
+  ctx.fillStyle = "#2e7d32";
+  ctx.font = '700 48px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  ctx.fillText("營養評估表", padding, padding + 48);
+
+  ctx.fillStyle = "#455a64";
+  ctx.font = '24px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  metaRows.forEach(([label, value], index) => {
+    const column = index % 2;
+    const row = Math.floor(index / 2);
+    const x = padding + column * (tableWidth / 2);
+    const y = padding + 92 + row * 34;
+    ctx.fillText(`${label}：${value}`, x, y);
+  });
+
+  return padding + 112 + Math.ceil(metaRows.length / 2) * 34;
+}
+
+function createAssessmentPdfCanvas() {
+  const colors = {
+    greenDark: "#2e7d32",
+    greenLight: "#e8f5e9",
+    greenBand: "#dcedc8",
+    hit: "#66bb6a",
+    gray: "#cfd8dc",
+    border: "#bdbdbd",
+    text: "#263238",
+    white: "#ffffff",
+    warn: "#e53935"
+  };
+  const padding = 36;
+  const questionWidth = 650;
+  const yesWidth = 80;
+  const supplementWidth = 96;
+  const headerHeight = 78;
+  const rowHeight = 56;
+  const totalHeight = 60;
+  const tableWidth = questionWidth + yesWidth + supplementWidth * SUPPLEMENTS.length;
+  const width = tableWidth + padding * 2;
+  const totals = calculateTotals();
+  const activeTotals = totals
+    .map((score, index) => ({ name: SUPPLEMENTS[index], score }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const recommendationRows = Math.max(1, Math.ceil(activeTotals.length / 4));
+  const recommendationHeight = 92 + recommendationRows * 48;
+  const tableHeight = headerHeight + QUESTIONS.length * rowHeight + totalHeight;
+  const canvas = document.createElement("canvas");
+  const preliminaryCanvas = document.createElement("canvas");
+  const preliminaryContext = preliminaryCanvas.getContext("2d");
+  const topY = drawPdfHeader(preliminaryContext, width, padding, tableWidth);
+  const height = topY + 20 + tableHeight + recommendationHeight + padding;
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = colors.white;
+  ctx.fillRect(0, 0, width, height);
+  const tableY = drawPdfHeader(ctx, width, padding, tableWidth) + 20;
+
+  let x = padding;
+  drawCell(ctx, x, tableY, questionWidth, headerHeight, colors.greenDark);
+  ctx.fillStyle = colors.white;
+  ctx.font = '700 28px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  ctx.fillText("評估項目", x + 18, tableY + 48);
+  x += questionWidth;
+
+  drawCell(ctx, x, tableY, yesWidth, headerHeight, colors.greenDark);
+  drawCenteredText(ctx, "是", x, tableY, yesWidth, headerHeight);
+  x += yesWidth;
+
+  ctx.font = '700 24px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  SUPPLEMENTS.forEach(name => {
+    drawCell(ctx, x, tableY, supplementWidth, headerHeight, colors.greenDark);
+    ctx.fillStyle = colors.white;
+    drawWrappedText(ctx, name, x + 12, tableY + 31, supplementWidth - 24, 26, 2);
+    x += supplementWidth;
+  });
+
+  QUESTIONS.forEach((question, qi) => {
+    const y = tableY + headerHeight + qi * rowHeight;
+    const checked = Boolean(answers[qi]);
+    const rowFill = checked ? colors.greenLight : (qi % 2 === 0 ? "#ffffff" : "#fafafa");
+
+    x = padding;
+    drawCell(ctx, x, y, questionWidth, rowHeight, rowFill);
+    ctx.fillStyle = colors.text;
+    ctx.font = '24px "PingFang TC", "Microsoft JhengHei", sans-serif';
+    drawWrappedText(ctx, question.text, x + 16, y + 24, questionWidth - 26, 23, 2);
+    x += questionWidth;
+
+    drawCell(ctx, x, y, yesWidth, rowHeight, rowFill);
+    drawCheckBox(ctx, x, y, checked);
+    x += yesWidth;
+
+    SUPPLEMENTS.forEach((_, si) => {
+      const scoredCell = isScoredCell(qi, si);
+      const fill = scoredCell && checked ? colors.hit : (scoredCell ? rowFill : colors.gray);
+      drawCell(ctx, x, y, supplementWidth, rowHeight, fill);
+      x += supplementWidth;
+    });
+  });
+
+  const totalY = tableY + headerHeight + QUESTIONS.length * rowHeight;
+  x = padding;
+  drawCell(ctx, x, totalY, questionWidth + yesWidth, totalHeight, colors.greenBand);
+  ctx.fillStyle = colors.greenDark;
+  ctx.font = '700 26px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  ctx.fillText("總計（單項超過 7 建議加重補充）", x + 190, totalY + 38);
+  x += questionWidth + yesWidth;
+
+  ctx.font = '700 28px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  totals.forEach(total => {
+    drawCell(ctx, x, totalY, supplementWidth, totalHeight, total > 7 ? colors.warn : colors.greenBand);
+    ctx.fillStyle = total > 7 ? colors.white : colors.text;
+    drawCenteredText(ctx, String(total), x, totalY, supplementWidth, totalHeight);
+    x += supplementWidth;
+  });
+
+  const recommendationY = totalY + totalHeight + 34;
+  ctx.fillStyle = colors.greenDark;
+  ctx.font = '700 32px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  ctx.fillText("建議補充", padding, recommendationY);
+  ctx.fillStyle = "#78909c";
+  ctx.font = '23px "PingFang TC", "Microsoft JhengHei", sans-serif';
+  ctx.fillText("若單項營養數值超過七以上，建議加重補充。", padding, recommendationY + 38);
+
+  if (activeTotals.length === 0) {
+    ctx.fillStyle = "#90a4ae";
+    ctx.fillText("尚未勾選任何項目", padding, recommendationY + 82);
+    return canvas;
+  }
+
+  const badgeWidth = 405;
+  const badgeHeight = 36;
+  activeTotals.forEach((item, index) => {
+    const col = index % 4;
+    const row = Math.floor(index / 4);
+    const badgeX = padding + col * (badgeWidth + 18);
+    const badgeY = recommendationY + 62 + row * 48;
+    const isOver = item.score > 7;
+    ctx.fillStyle = isOver ? colors.warn : colors.greenLight;
+    ctx.strokeStyle = isOver ? colors.warn : colors.greenDark;
+    ctx.lineWidth = 2;
+    ctx.fillRect(badgeX, badgeY, badgeWidth, badgeHeight);
+    ctx.strokeRect(badgeX, badgeY, badgeWidth, badgeHeight);
+    ctx.fillStyle = isOver ? colors.white : colors.greenDark;
+    ctx.font = '700 22px "PingFang TC", "Microsoft JhengHei", sans-serif';
+    ctx.fillText(`${item.name}：${item.score} 分${isOver ? "（建議加重補充）" : ""}`, badgeX + 14, badgeY + 25);
+  });
+
+  return canvas;
+}
+
+function canvasToJpegBytes(canvas, quality = 0.92) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(async blob => {
+      if (!blob) {
+        reject(new Error("無法建立 PDF 圖像"));
+        return;
+      }
+      resolve(new Uint8Array(await blob.arrayBuffer()));
+    }, "image/jpeg", quality);
+  });
+}
+
+function appendPdfString(chunks, state, text) {
+  const bytes = new TextEncoder().encode(text);
+  chunks.push(bytes);
+  state.length += bytes.length;
+}
+
+function appendPdfBytes(chunks, state, bytes) {
+  chunks.push(bytes);
+  state.length += bytes.length;
+}
+
+function createPdfBlob(images, pageWidth, pageHeight) {
+  const chunks = [];
+  const state = { length: 0 };
+  const offsets = [0];
+  const objectCount = 2 + images.length * 3;
+
+  function beginObject(id) {
+    offsets[id] = state.length;
+    appendPdfString(chunks, state, `${id} 0 obj\n`);
+  }
+
+  function endObject() {
+    appendPdfString(chunks, state, "\nendobj\n");
+  }
+
+  appendPdfString(chunks, state, "%PDF-1.4\n");
+
+  beginObject(1);
+  appendPdfString(chunks, state, "<< /Type /Catalog /Pages 2 0 R >>");
+  endObject();
+
+  beginObject(2);
+  const pageRefs = images.map((_, index) => `${3 + index * 3} 0 R`).join(" ");
+  appendPdfString(chunks, state, `<< /Type /Pages /Kids [${pageRefs}] /Count ${images.length} >>`);
+  endObject();
+
+  images.forEach((image, index) => {
+    const pageId = 3 + index * 3;
+    const contentId = pageId + 1;
+    const imageId = pageId + 2;
+    const imageName = `Im${index + 1}`;
+    const drawHeight = Math.min(pageHeight, image.pageHeight);
+    const drawY = pageHeight - drawHeight;
+    const stream = `q ${pageWidth} 0 0 ${drawHeight} 0 ${drawY} cm /${imageName} Do Q`;
+
+    beginObject(pageId);
+    appendPdfString(
+      chunks,
+      state,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /${imageName} ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`
+    );
+    endObject();
+
+    beginObject(contentId);
+    appendPdfString(chunks, state, `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    endObject();
+
+    beginObject(imageId);
+    appendPdfString(
+      chunks,
+      state,
+      `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.bytes.length} >>\nstream\n`
+    );
+    appendPdfBytes(chunks, state, image.bytes);
+    appendPdfString(chunks, state, "\nendstream");
+    endObject();
+  });
+
+  const xrefOffset = state.length;
+  appendPdfString(chunks, state, `xref\n0 ${objectCount + 1}\n`);
+  appendPdfString(chunks, state, "0000000000 65535 f \n");
+  for (let i = 1; i <= objectCount; i += 1) {
+    appendPdfString(chunks, state, `${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+  }
+  appendPdfString(chunks, state, `trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+  return new Blob(chunks, { type: "application/pdf" });
+}
+
+async function createAssessmentPdfBlob(canvas) {
+  const pageWidth = 842;
+  const pageHeight = 595;
+  const pageScale = pageWidth / canvas.width;
+  const sliceHeight = Math.floor(pageHeight / pageScale);
+  const images = [];
+
+  for (let y = 0; y < canvas.height; y += sliceHeight) {
+    const height = Math.min(sliceHeight, canvas.height - y);
+    const pageCanvas = document.createElement("canvas");
+    pageCanvas.width = canvas.width;
+    pageCanvas.height = height;
+    const pageContext = pageCanvas.getContext("2d");
+    pageContext.fillStyle = "#ffffff";
+    pageContext.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+    pageContext.drawImage(canvas, 0, y, canvas.width, height, 0, 0, canvas.width, height);
+
+    images.push({
+      bytes: await canvasToJpegBytes(pageCanvas),
+      width: pageCanvas.width,
+      height: pageCanvas.height,
+      pageHeight: height * pageScale
+    });
+  }
+
+  return createPdfBlob(images, pageWidth, pageHeight);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function saveAsPdf() {
+  const button = document.getElementById("btn-save-pdf");
+  button.disabled = true;
+  setSubmitStatus("PDF 產生中...");
+
+  try {
+    const canvas = createAssessmentPdfCanvas();
+    const pdfBlob = await createAssessmentPdfBlob(canvas);
+    downloadBlob(pdfBlob, `${getPdfTitle()}.pdf`);
+    setSubmitStatus("PDF 已下載。", "success");
+  } catch (error) {
+    console.error("產生 PDF 失敗", error);
+    setSubmitStatus("PDF 產生失敗，請稍後再試。", "error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function setAssessmentLocked(locked) {
@@ -802,14 +1163,6 @@ function build() {
       td.className = "grid-cell";
       td.dataset.q = qi;
       td.dataset.s = si;
-      td.addEventListener("click", () => {
-        if (!editMode || assessmentLocked) return;
-        const set = new Set(mapping[qi]);
-        set.has(si) ? set.delete(si) : set.add(si);
-        mapping[qi] = [...set].sort((a, b) => a - b);
-        saveMapping();
-        render();
-      });
       tr.appendChild(td);
     });
 
@@ -871,13 +1224,6 @@ document.getElementById("btn-reset-answers").addEventListener("click", () => {
   render();
 });
 
-document.getElementById("btn-reset-mapping").addEventListener("click", () => {
-  if (!confirm("確定要將營養素對應還原為預設值嗎？")) return;
-  mapping = DEFAULT_MAPPING.map(m => m.slice());
-  saveMapping();
-  render();
-});
-
 ["name", "age"].forEach(id => {
   document.getElementById(id).addEventListener("input", e => {
     e.currentTarget.classList.toggle("invalid", e.currentTarget.value.trim() === "");
@@ -928,15 +1274,20 @@ document.getElementById("btn-share").addEventListener("click", async () => {
 
   if (!id) {
     setSubmitStatus("目前沒有可分享的紀錄 ID。", "error");
+    alert("目前沒有可分享的紀錄 ID。");
     return;
   }
 
+  const shareUrl = getShareUrl(id);
+
   try {
-    await copyText(getShareUrl(id));
+    await copyText(shareUrl);
     setSubmitStatus("分享網址已複製。", "success");
+    alert(`分享網址已複製。\n\n${shareUrl}`);
   } catch (error) {
     console.error("複製分享網址失敗", error);
     setSubmitStatus("複製失敗，請手動複製瀏覽器網址。", "error");
+    window.prompt("複製失敗，請手動複製分享網址：", shareUrl);
   }
 });
 
