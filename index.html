@@ -374,7 +374,8 @@ const QUESTIONS = [
   { text: "47. 您現在已經懷孕或在哺乳", map: [] }
 ];
 
-const API_BASE_URL = (window.NUTRITION_API_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
+// const API_BASE_URL = (window.NUTRITION_API_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
+const API_BASE_URL = (window.NUTRITION_API_BASE_URL || "https://nutritional-assessment-api.onrender.com").replace(/\/$/, "");
 const API_ENDPOINT = window.NUTRITION_API_ENDPOINT || `${API_BASE_URL}/api/assessments`;
 const DEFAULT_MAPPING = QUESTIONS.map(q => q.map.slice());
 
