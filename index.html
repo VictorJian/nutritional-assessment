@@ -296,7 +296,7 @@
     <p class="note">若單項營養數值超過七以上，建議加重補充。均衡的營養、適量的補充、運動是維持健康的不二法門。</p>
     <div class="badges" id="badges"><span class="empty">尚未勾選任何項目</span></div>
     <div class="api-panel">
-      <h3>後端紀錄</h3>
+      <h3>紀錄</h3>
       <div class="api-actions">
         <label>紀錄 ID
           <input type="text" id="record-id" autocomplete="off" placeholder="送出後自動帶入">
@@ -309,7 +309,7 @@
         <button id="btn-search-name" type="button">查姓名</button>
       </div>
       <div class="record-output" id="record-output" aria-live="polite">
-        <span class="empty">尚無後端紀錄</span>
+        <span class="empty">尚無紀錄</span>
       </div>
     </div>
   </div>
@@ -1030,7 +1030,7 @@ function displayBackendRecord(record) {
   if (!record || !record.id) {
     const empty = document.createElement("span");
     empty.className = "empty";
-    empty.textContent = "尚無後端紀錄";
+    empty.textContent = "尚無紀錄";
     output.appendChild(empty);
     return;
   }
@@ -1056,7 +1056,7 @@ function resetBackendRecordDisplay() {
   clearElement(output);
   const empty = document.createElement("span");
   empty.className = "empty";
-  empty.textContent = "尚無後端紀錄";
+  empty.textContent = "尚無紀錄";
   output.appendChild(empty);
 }
 
@@ -1086,7 +1086,7 @@ function displaySearchResults(result) {
   if (records.length === 0) {
     const empty = document.createElement("span");
     empty.className = "empty";
-    empty.textContent = "查無符合姓名的後端紀錄";
+    empty.textContent = "查無符合姓名的紀錄";
     output.appendChild(empty);
     return;
   }
@@ -1121,7 +1121,7 @@ function displaySearchResults(result) {
     button.addEventListener("click", () => {
       setActiveRecordId(record.id || "");
       displayBackendRecord(record);
-      setSubmitStatus("已載入後端紀錄。", "success");
+      setSubmitStatus("已載入紀錄。", "success");
     });
     list.appendChild(button);
   });
@@ -1307,7 +1307,7 @@ document.getElementById("btn-fetch").addEventListener("click", async e => {
     const savedRecord = await fetchRecordById(id);
     setActiveRecordId(savedRecord.id || id);
     displayBackendRecord(savedRecord);
-    setSubmitStatus("已取得後端紀錄。", "success");
+    setSubmitStatus("已取得紀錄。", "success");
   } catch (error) {
     console.error("查詢營養評估資料失敗", error);
     setSubmitStatus("查詢失敗，請確認紀錄 ID 或後端 API。", "error");
