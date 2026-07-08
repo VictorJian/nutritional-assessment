@@ -266,6 +266,7 @@
     <button id="btn-reset-answers" type="button">🧹 清除勾選</button>
     <button id="btn-reset-mapping" type="button" disabled aria-disabled="true" title="此功能暫不開放">↩︎ 還原預設對應</button>
     <button type="button" onclick="window.print()">🖨 列印</button>
+    <button id="btn-save-pdf" type="button">📄 存成 PDF</button>
     <span class="hint" id="edit-hint">勾選左側「是」即自動計分；編輯對應表與還原預設對應功能暫不開放。</span>
   </div>
 
@@ -306,6 +307,7 @@
           <input type="text" id="record-id" autocomplete="off" placeholder="送出後自動帶入">
         </label>
         <button id="btn-fetch" type="button">🔎 查詢</button>
+        <button id="btn-share" type="button" disabled>分享網址</button>
         <label>姓名
           <input type="text" id="search-name" autocomplete="off" placeholder="輸入姓名查詢">
         </label>
@@ -443,17 +445,42 @@ function setSubmitStatus(message, type = "") {
   status.className = "submit-status" + (type ? ` ${type}` : "");
 }
 
+function getPdfFilenamePart(value, fallback) {
+  const text = String(value || "").trim() || fallback;
+  return text.replace(/[\\/:*?"<>|]/g, "-");
+}
+
+function getPdfTitle() {
+  const name = getPdfFilenamePart(document.getElementById("name").value, "未填姓名");
+  const date = getPdfFilenamePart(document.getElementById("date").value, new Date().toISOString().slice(0, 10));
+  const recordId = getPdfFilenamePart(document.getElementById("record-id").value, "");
+  return ["營養評估表", name, date, recordId].filter(Boolean).join("_");
+}
+
+function saveAsPdf() {
+  const previousTitle = document.title;
+  document.title = getPdfTitle();
+  setSubmitStatus("請在列印視窗選擇「另存為 PDF」。", "success");
+
+  const restoreTimer = window.setTimeout(restoreTitle, 30000);
+  function restoreTitle() {
+    document.title = previousTitle;
+    window.clearTimeout(restoreTimer);
+  }
+
+  window.addEventListener("afterprint", restoreTitle, { once: true });
+  window.print();
+}
+
 function setAssessmentLocked(locked) {
   assessmentLocked = locked;
-  ["name", "age", "date", "record-id", "search-name"].forEach(id => {
+  ["name", "age", "date"].forEach(id => {
     document.getElementById(id).disabled = locked;
   });
   document.querySelectorAll("tbody input[type=checkbox]").forEach(cb => {
     cb.disabled = locked;
   });
   document.getElementById("btn-reset-answers").disabled = locked;
-  document.getElementById("btn-fetch").disabled = locked;
-  document.getElementById("btn-search-name").disabled = locked;
   document.getElementById("btn-submit").classList.toggle("hidden", locked);
   document.getElementById("btn-new-assessment").classList.toggle("hidden", !locked);
 }
@@ -490,6 +517,56 @@ function getRecordEndpoint(id) {
 
 function getNameSearchEndpoint(name) {
   return `${API_ENDPOINT.replace(/\/$/, "")}?name=${encodeURIComponent(name)}`;
+}
+
+function getShareUrl(id) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("id", id);
+  return url.toString();
+}
+
+function updateBrowserRecordId(id) {
+  const url = new URL(window.location.href);
+  if (id) {
+    url.searchParams.set("id", id);
+  } else {
+    url.searchParams.delete("id");
+  }
+  window.history.replaceState({}, "", url);
+}
+
+function setActiveRecordId(id, updateUrl = true) {
+  const normalizedId = id || "";
+  document.getElementById("record-id").value = normalizedId;
+  document.getElementById("btn-share").disabled = normalizedId === "";
+  if (updateUrl) updateBrowserRecordId(normalizedId);
+}
+
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
+}
+
+async function fetchRecordById(id) {
+  const response = await fetch(getRecordEndpoint(id));
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return response.json();
 }
 
 function clearElement(element) {
@@ -549,6 +626,42 @@ function renderRecordBadges(parent, data) {
   parent.appendChild(badges);
 }
 
+function syncAnswerControls() {
+  document.querySelectorAll("#assessment tbody tr").forEach((tr, qi) => {
+    const checked = Boolean(answers[qi]);
+    const checkbox = tr.querySelector("input[type=checkbox]");
+    if (checkbox) checkbox.checked = checked;
+    tr.classList.toggle("checked-row", checked);
+  });
+  render();
+}
+
+function isSavedAnswerChecked(value) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function applyRecordToAssessment(record) {
+  const data = record.data || {};
+  const respondent = data.respondent || {};
+  const savedAnswers = Array.isArray(data.answers) ? data.answers : [];
+
+  document.getElementById("name").value = respondent.name || "";
+  document.getElementById("age").value = respondent.age === null || respondent.age === undefined ? "" : String(respondent.age);
+  document.getElementById("date").value = respondent.date || "";
+
+  answers = QUESTIONS.map((_, qi) => {
+    const savedAnswer = savedAnswers.find((answer, index) => {
+      if (!answer) return false;
+      const questionId = Number(answer.questionId);
+      return Number.isInteger(questionId) ? questionId === qi + 1 : index === qi;
+    });
+    return savedAnswer ? isSavedAnswerChecked(savedAnswer.checked) : false;
+  });
+
+  syncAnswerControls();
+  setAssessmentLocked(true);
+}
+
 function displayBackendRecord(record) {
   const output = document.getElementById("record-output");
   clearElement(output);
@@ -567,12 +680,12 @@ function displayBackendRecord(record) {
   meta.className = "record-meta";
 
   addMetaRow(meta, "紀錄 ID", record.id);
-  addMetaRow(meta, "後端建立時間", formatDateTime(record.createdAt));
-  addMetaRow(meta, "前端送出時間", formatDateTime(data.submittedAt));
+  addMetaRow(meta, "建立時間", formatDateTime(record.createdAt));
   addMetaRow(meta, "姓名", respondent.name);
   addMetaRow(meta, "年齡", respondent.age);
   addMetaRow(meta, "填表日期", respondent.date);
 
+  applyRecordToAssessment(record);
   output.appendChild(meta);
   renderRecordBadges(output, data);
 }
@@ -593,16 +706,14 @@ function startNewAssessment() {
   document.getElementById("name").value = "";
   document.getElementById("age").value = "";
   document.getElementById("date").valueAsDate = new Date();
-  document.getElementById("record-id").value = "";
+  setActiveRecordId("");
   document.getElementById("search-name").value = "";
 
   document.querySelectorAll(".meta input.invalid").forEach(input => input.classList.remove("invalid"));
-  document.querySelectorAll("tbody input[type=checkbox]").forEach(cb => cb.checked = false);
-  document.querySelectorAll("tbody tr").forEach(tr => tr.classList.remove("checked-row"));
 
   resetBackendRecordDisplay();
   setSubmitStatus("已開始填寫新評估。", "success");
-  render();
+  syncAnswerControls();
   document.getElementById("name").focus();
 }
 
@@ -620,7 +731,7 @@ function displaySearchResults(result) {
   }
 
   if (records.length === 1) {
-    document.getElementById("record-id").value = records[0].id || "";
+    setActiveRecordId(records[0].id || "");
     displayBackendRecord(records[0]);
     return;
   }
@@ -647,7 +758,7 @@ function displaySearchResults(result) {
     button.appendChild(title);
     button.appendChild(detail);
     button.addEventListener("click", () => {
-      document.getElementById("record-id").value = record.id || "";
+      setActiveRecordId(record.id || "");
       displayBackendRecord(record);
       setSubmitStatus("已載入後端紀錄。", "success");
     });
@@ -795,7 +906,7 @@ document.getElementById("btn-submit").addEventListener("click", async e => {
     }
 
     const savedRecord = await response.json();
-    document.getElementById("record-id").value = savedRecord.id || "";
+    setActiveRecordId(savedRecord.id || "");
     document.getElementById("search-name").value = payload.respondent.name || "";
     displayBackendRecord(savedRecord);
     setAssessmentLocked(true);
@@ -810,6 +921,25 @@ document.getElementById("btn-submit").addEventListener("click", async e => {
 
 document.getElementById("btn-new-assessment").addEventListener("click", startNewAssessment);
 
+document.getElementById("btn-save-pdf").addEventListener("click", saveAsPdf);
+
+document.getElementById("btn-share").addEventListener("click", async () => {
+  const id = document.getElementById("record-id").value.trim();
+
+  if (!id) {
+    setSubmitStatus("目前沒有可分享的紀錄 ID。", "error");
+    return;
+  }
+
+  try {
+    await copyText(getShareUrl(id));
+    setSubmitStatus("分享網址已複製。", "success");
+  } catch (error) {
+    console.error("複製分享網址失敗", error);
+    setSubmitStatus("複製失敗，請手動複製瀏覽器網址。", "error");
+  }
+});
+
 document.getElementById("btn-fetch").addEventListener("click", async e => {
   const button = e.currentTarget;
   const id = document.getElementById("record-id").value.trim();
@@ -823,13 +953,8 @@ document.getElementById("btn-fetch").addEventListener("click", async e => {
   setSubmitStatus("查詢中...");
 
   try {
-    const response = await fetch(getRecordEndpoint(id));
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const savedRecord = await response.json();
+    const savedRecord = await fetchRecordById(id);
+    setActiveRecordId(savedRecord.id || id);
     displayBackendRecord(savedRecord);
     setSubmitStatus("已取得後端紀錄。", "success");
   } catch (error) {
@@ -874,6 +999,22 @@ document.getElementById("date").valueAsDate = new Date();
 
 build();
 render();
+
+const initialRecordId = new URLSearchParams(window.location.search).get("id");
+if (initialRecordId) {
+  setActiveRecordId(initialRecordId, false);
+  setSubmitStatus("正在載入分享紀錄...");
+  fetchRecordById(initialRecordId)
+    .then(record => {
+      setActiveRecordId(record.id || initialRecordId, false);
+      displayBackendRecord(record);
+      setSubmitStatus("已載入分享紀錄。", "success");
+    })
+    .catch(error => {
+      console.error("載入分享紀錄失敗", error);
+      setSubmitStatus("載入分享紀錄失敗，請確認網址或後端 API。", "error");
+    });
+}
 </script>
 </body>
 </html>
