@@ -11,6 +11,7 @@
 - 可用紀錄 ID 查詢單筆資料。
 - 可用姓名查詢多筆資料，並從符合筆數中選擇一筆查看。
 - 可複製分享網址；網址會帶上 `?id=<紀錄ID>`，開啟後會自動查詢該筆資料。
+- 頁面載入時會背景呼叫後端 `/ping`，讓 Render 免費服務先醒來。
 - 可列印。
 - 可直接下載 PDF 檔。
 - 可按「再寫一張」清空畫面並重新填寫。
@@ -31,16 +32,16 @@ http://localhost:8080
 
 接著直接用瀏覽器開啟 `index.html`。
 
-如果後端不是跑在 `http://localhost:8080`，前端預設 API 位置需要同步調整：
+前端目前預設呼叫 Render 後端：
+
+```text
+https://nutritional-assessment-api.onrender.com/api/assessments
+```
+
+如果後端不是跑在預設位置，前端 API 位置需要同步調整：
 
 ```js
 window.NUTRITION_API_BASE_URL = "http://localhost:8080";
-```
-
-目前前端預設呼叫：
-
-```text
-http://localhost:8080/api/assessments
 ```
 
 ## 操作流程
@@ -83,3 +84,4 @@ index.html?id=20260708110511
 - `POST /api/assessments`
 - `GET /api/assessments/:id`
 - `GET /api/assessments?name=<name>`
+- `GET /ping`

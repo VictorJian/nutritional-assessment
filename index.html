@@ -377,6 +377,7 @@ const QUESTIONS = [
 // const API_BASE_URL = (window.NUTRITION_API_BASE_URL || "http://localhost:8080").replace(/\/$/, "");
 const API_BASE_URL = (window.NUTRITION_API_BASE_URL || "https://nutritional-assessment-api.onrender.com").replace(/\/$/, "");
 const API_ENDPOINT = window.NUTRITION_API_ENDPOINT || `${API_BASE_URL}/api/assessments`;
+const API_WAKE_ENDPOINT = window.NUTRITION_API_WAKE_ENDPOINT || `${API_BASE_URL}/ping`;
 const DEFAULT_MAPPING = QUESTIONS.map(q => q.map.slice());
 
 let mapping = DEFAULT_MAPPING.map(m => m.slice());
@@ -931,6 +932,11 @@ async function fetchRecordById(id) {
   return response.json();
 }
 
+function wakeBackend() {
+  fetch(API_WAKE_ENDPOINT, { cache: "no-store" })
+    .catch(error => console.info("喚醒後端服務失敗", error));
+}
+
 function clearElement(element) {
   while (element.firstChild) element.removeChild(element.firstChild);
 }
@@ -1351,6 +1357,7 @@ document.getElementById("date").valueAsDate = new Date();
 
 build();
 render();
+wakeBackend();
 
 const initialRecordId = new URLSearchParams(window.location.search).get("id");
 if (initialRecordId) {
